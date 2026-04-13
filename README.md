@@ -88,16 +88,43 @@ This means Claude can never lose state on compaction — the summary is always s
 
 ## Adding a New Project
 
-Tell Claude: "Set up a new project called [name]"
+### Quick (one command):
+```bash
+~/.claude/scripts/add-project.sh --name "My Project" --path /path/to/project
+```
 
-Claude will automatically:
-1. Create the working directory
-2. Create a vault file in `~/.claude/memory-vault/`
-3. Create `_SESSION_LOG.md` in the project directory
-4. Create a project-scoped `MEMORY.md` in `~/.claude/projects/`
-5. Add the project to the registry in `_MASTER.md`
+Or from inside the project directory:
+```bash
+cd /path/to/project
+~/.claude/scripts/add-project.sh --name "My Project"
+```
 
-The full template is in `~/.claude/memory-vault/_MASTER.md`.
+### Options:
+```
+--name NAME           Project name (required)
+--path PATH           Working directory (default: current directory)
+--agent-name NAME     Agent identity name (optional)
+--description DESC    One-line project description (optional)
+--quiet               Skip interactive prompts (for agent/script use)
+```
+
+### What it creates:
+1. **Vault file** — `~/.claude/memory-vault/<project-name>.md`
+2. **Session log** — `<project-path>/_SESSION_LOG.md`
+3. **Project MEMORY.md** — `~/.claude/projects/-<encoded-path>/memory/MEMORY.md`
+4. **Registry entry** — row in `~/.claude/memory-vault/_MASTER.md`
+5. **compactions/** — directory for compaction summaries
+
+### Agent usage:
+Claude agents can run this automatically during session start when they detect an
+unregistered working directory. The procedure is at `~/.claude/procedures/shared/add-project.md`.
+
+```bash
+# Example: agent creates a project with --quiet to skip prompts
+~/.claude/scripts/add-project.sh --name "Client App" --path /Users/me/client-app --quiet
+```
+
+The full template for manual setup is still available in `~/.claude/memory-vault/_MASTER.md`.
 
 ## Customization
 
@@ -123,6 +150,47 @@ Defaults in `vault_lib.py`:
 - MOC entry cap: 200 characters
 
 Adjust these constants if your vault has different needs.
+
+### Custom PreToolUse Hooks
+
+You can add your own hooks that rewrite or intercept tool calls. A common pattern is a command proxy that transparently rewrites CLI commands before they execute.
+
+Example: a PreToolUse hook on `Bash` that rewrites `git status` → `my-proxy git status`:
+
+```bash
+# ~/.claude/hooks/my-proxy-rewrite.sh
+#!/bin/bash
+INPUT=$(cat)
+CMD=$(echo "$INPUT" | jq -r '.tool_input.command // empty')
+[ -z "$CMD" ] && exit 0
+
+# Rewrite known commands through your proxy
+case "$CMD" in
+  git\ *|npm\ *|docker\ *)
+    REWRITTEN=$(echo "$CMD" | sed "s|^|my-proxy |")
+    echo "{\"decision\": \"allow\", \"tool_input\": {\"command\": \"$REWRITTEN\"}}"
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+```
+
+Wire it in `~/.claude/settings.json`:
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [{ "type": "command", "command": "~/.claude/hooks/my-proxy-rewrite.sh" }]
+      }
+    ]
+  }
+}
+```
+
+This pattern is useful for token-saving proxies, command audit logging, or security guards that block dangerous operations.
 
 ## Troubleshooting
 

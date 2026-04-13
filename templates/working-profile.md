@@ -81,6 +81,37 @@ These are patterns that cause real problems. They were discovered the hard way a
 | Not verifying after migrations or refactors | Always run a verification pass after any bulk operation. "Trust but verify" — the verification discipline catches gaps when they exist. |
 
 ## Corrections Log
+
+These corrections were discovered across 66+ sessions of real production use. They're pre-loaded so you don't repeat them. Add your own as you work with the user.
+
+| # | Category | What Went Wrong | What Actually Works |
+|---|----------|----------------|---------------------|
+| 1 | Onboarding | Forgot to create session log for a new project | Every project needs all artifacts automatically (vault file, MEMORY.md, session log, registry entry). Use `add-project.sh` — never scaffold by hand. |
+| 2 | Onboarding | Didn't create project-scoped MEMORY.md | Without MEMORY.md, the project has no memory persistence. It's the most-missed artifact. `add-project.sh` handles this. |
+| 3 | Onboarding | Duplicated active projects list in every MEMORY.md | Point to `_MASTER.md`, don't duplicate data that grows. Single source of truth. |
+| 4 | References | Used vague "Section 3" references in analysis docs | Use specific `[[wikilinks]]` with section anchors, always. Never "the third file" or "Section 3". |
+| 5 | Context | Launched 10 research agents; retrieving all results blew out the context window | Agents write results to MD files on disk, not back to context. Launch unlimited agents; read files one by one afterward. |
+| 6 | Context | Applied "max 3 agents" rule when the real problem was results flooding context | The fix isn't limiting agent count — it's routing output to files. Unlimited parallelism, zero context blowout. |
+| 7 | Context | Accumulated 36 screenshots in conversation context; API crashed (image size limit) | Save screenshots to disk only — don't view in context unless needed. One at a time max. Write findings incrementally. |
+| 8 | Context | **REPEAT:** Accumulated screenshots in context during CSS work — hit 100% context and killed the session | This rule was ALREADY DOCUMENTED. Screenshots go to DISK ONLY. Never view in context unless absolutely necessary. Non-negotiable. |
+| 9 | Context | Re-reading files that were already injected by hooks | The SessionStart hook already injected working profile, vault file, session log, and C&N. Don't waste tokens reading them again. |
+| 10 | Context | Reading whole files to check status | Use frontmatter-only reads (`offset=1 limit=15`) for status checks. Use `vault-query.py` for metadata searches. |
+| 11 | Context | Amending existing compaction files | NEVER. Each compaction event = one new small file. Use `-cont1`, `-cont2` suffixes. |
+| 12 | Session | Skipped compaction save to start "real work" faster | The compaction gate blocks all tools until the save is done. The continuation summary IS a compaction. Save it FIRST. Always. |
+| 13 | Session | **REPEAT:** Skipped compaction save on context continuation. Same mistake. | The continuation summary IS a compaction. Save it FIRST. Before any task. No exceptions. |
+| 14 | Session | Launched work agents before completing Session Start Protocol | Complete ALL orientation steps AND save any compaction BEFORE any work. No exceptions. |
+| 15 | Session | Batching session log updates to end of session | Context can compact at any time. Write to session log after every significant milestone. |
+| 16 | Session | Didn't checkpoint live state during multi-step work; lost progress on compaction | Maintain `.state` file continuously during multi-step tasks — update after every step, not reactively. |
+| 17 | Agents | Ran 3,498-contact API import as single sequential background task (~35 min blocking) | For large imports, split into parallel agent batches. Use `--start`/`--limit` parameters. Doesn't block conversation and is more resilient to failures. |
+| 18 | Tools | Using Grep for vault-wide metadata searches | Use `vault-query.py` first — reads only YAML frontmatter, costs almost zero tokens. Fall back to Grep only for content searches. |
+| 19 | Tools | Guessing at file contents or lore details | ALWAYS search the vault first. Never fabricate or assume details. |
+| 20 | Infra | Writing behavioral rules and hoping they stick | Build structural walls (hooks with `exit 2`), not text rules. If a rule is violated even once after being written down, escalate to structural enforcement. |
+| 21 | Infra | Not verifying after migrations or refactors | Always run a verification pass after any bulk operation. "Trust but verify." |
+| 22 | Design | Didn't measure merge targets before a migration — missed 3 oversize files | Drift audits need to measure BOTH drift sources AND merge targets. |
+| 23 | Design | Proposed installing an external MCP tool when we could build the bridge ourselves | Builder over consumer — if the tool is simple enough to build in one session, build it. |
+
+**Add your own corrections below as they happen. Include the date and source.**
+
 | Date | What Went Wrong | What You Expect | Source |
 |------|----------------|-----------------|--------|
 | | | | |

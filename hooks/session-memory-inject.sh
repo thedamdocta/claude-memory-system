@@ -66,12 +66,39 @@ detect_project() {
       SESSION_LOG="$dir/_SESSION_LOG.md"
       COMPACTIONS_DIR="$dir/compactions"
 
-      # Try to find a matching vault file by directory basename
+      # Strategy 1: Check project-scoped MEMORY.md for explicit vault pointer
+      # MEMORY.md contains "-> Read vault: `/path/to/vault-file.md`"
+      local encoded_path
+      encoded_path=$(echo "$dir" | sed 's|/|-|g' | sed 's|^-||')
+      local memory_file="$HOME/.claude/projects/-${encoded_path}/memory/MEMORY.md"
+      if [ -f "$memory_file" ]; then
+        local vault_pointer
+        vault_pointer=$(grep -o 'Read vault: `[^`]*`' "$memory_file" 2>/dev/null | head -1 | sed 's/Read vault: `\(.*\)`/\1/')
+        if [ -n "$vault_pointer" ] && [ -f "$vault_pointer" ]; then
+          PROJECT_VAULT="$vault_pointer"
+          return 0
+        fi
+      fi
+
+      # Strategy 2: Match vault file by directory basename
       local basename
       basename=$(basename "$dir")
       if [ -f "$VAULT/$basename.md" ]; then
         PROJECT_VAULT="$VAULT/$basename.md"
+        return 0
       fi
+
+      # Strategy 3: Scan _MASTER.md registry for path match
+      if [ -f "$VAULT/_MASTER.md" ]; then
+        local vault_name
+        vault_name=$(grep "\`$dir/\`\|$dir " "$VAULT/_MASTER.md" 2>/dev/null | head -1 | awk -F'|' '{print $3}' | tr -d ' ')
+        if [ -n "$vault_name" ] && [ -f "$VAULT/$vault_name" ]; then
+          PROJECT_VAULT="$VAULT/$vault_name"
+          return 0
+        fi
+      fi
+
+      # No vault file found — project exists but isn't registered
       return 0
     fi
     dir=$(dirname "$dir")
