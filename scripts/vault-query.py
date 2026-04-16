@@ -7,11 +7,13 @@ Returns markdown table (default) or TSV/JSON.
 
 Usage:
     vault-query.py --type moc
-    vault-query.py --tag character --status active
-    vault-query.py --related "Yume" --with-summary
+    vault-query.py --tag research --status active
+    vault-query.py --related "ProjectRoot" --with-summary
+    vault-query.py --query "WidgetName"                     # search title/aliases/name
+    vault-query.py --query "auth" --type leaf               # combine with other filters
     vault-query.py --updated-since 2026-04-01 --format json
-    vault-query.py --read-section "EP 01 - Be Careful Where You End Up.md" "Open Questions"
-    vault-query.py --read-section "Laz - The Ender of Worlds.md" "Power" --with-summary
+    vault-query.py --read-section "Plan.md" "Open Questions"
+    vault-query.py --read-section "Design.md" "Overview" --with-summary
 """
 
 import argparse
@@ -440,6 +442,23 @@ def handle_read_section(args) -> None:
 def matches_filters(fm: dict, path: str, layer: str, args) -> bool:
     """Check if frontmatter matches all filter criteria."""
 
+    # Query filter — substring search against title, name, and aliases
+    # (case-insensitive). Primary "find the file" use case. Does NOT search
+    # summary or content — those are Grep's job.
+    if args.query:
+        query_lower = args.query.lower()
+        title = str(fm.get('title', '')).lower()
+        name = str(fm.get('name', '')).lower()
+        aliases = fm.get('aliases', [])
+        if isinstance(aliases, str):
+            aliases = [aliases]
+        aliases_str = ' '.join(str(a) for a in aliases).lower()
+
+        if (query_lower not in title and
+                query_lower not in name and
+                query_lower not in aliases_str):
+            return False
+
     # Type filter (matches CLASSIFIED layer, not raw frontmatter type)
     if args.type:
         if layer != args.type.lower():
@@ -560,6 +579,7 @@ def main():
                    help='Text to append at the end of the section (use with --write-section)')
     ap.add_argument('--replace', metavar='TEXT', dest='replace_text',
                    help='Text to replace the section body with (use with --write-section)')
+    ap.add_argument('--query', help='Search title/aliases/name for term (case-insensitive substring). Primary "find the file by name" use case.')
     ap.add_argument('--type', help='Filter by frontmatter type (router|moc|leaf|meta)')
     ap.add_argument('--tag', help='Filter by tag (matches if tag is in tags list)')
     ap.add_argument('--status', help='Filter by status field')

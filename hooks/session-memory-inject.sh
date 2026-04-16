@@ -47,6 +47,16 @@ if [ -f "$VAULT/working-profile.md" ]; then
   echo ""
 fi
 
+# Always inject chain-check.md (cross-agent chain-check discipline / DONE receipt protocol)
+# Patches a known architectural gap: most LLMs ship without built-in
+# chain-of-thought verification. Every agent inherits this discipline at
+# session start via this hook.
+if [ -f "$VAULT/chain-check.md" ]; then
+  echo "=== CHAIN-CHECK PROTOCOL (auto-injected) ==="
+  cat "$VAULT/chain-check.md"
+  echo ""
+fi
+
 # --- Auto-detect project from working directory ---
 # Walk up from PWD looking for _SESSION_LOG.md to find the project root.
 # Then look for a matching vault file in memory-vault/.
@@ -137,6 +147,36 @@ if [ -n "$PROJECT_VAULT" ] && [ -f "$PROJECT_VAULT" ]; then
   echo "=== PROJECT VAULT (auto-injected) ==="
   cat "$PROJECT_VAULT"
   echo ""
+fi
+
+# Inject agent identity file(s) if any exist at project root.
+#
+# Convention: agent-identity files use the pattern <Name>_.md (trailing underscore)
+# at project root, e.g., "Sage_.md". The trailing underscore marks the file as
+# agent-scoped — the agent's evolving heuristics, voice, and discipline for THIS
+# project. Distinct from working-profile.md (cross-project, user's preferences)
+# and the project vault file (project facts).
+#
+# Legacy pattern: _<NAME>.md (prefix underscore) also supported for back-compat.
+#
+# This hook scans for either pattern at project root and injects any matches.
+# Reserved router/index filenames are skipped so they don't get pulled in by the
+# prefix-underscore glob.
+#
+# To add an agent: create <YourAgentName>_.md at project root with agent-identity
+# content. See the README or templates/ folder for a starter.
+if [ -n "$PROJECT_ROOT" ]; then
+  for AGENT_FILE in "$PROJECT_ROOT"/*_.md "$PROJECT_ROOT"/_*.md; do
+    [ -f "$AGENT_FILE" ] || continue
+    BASENAME=$(basename "$AGENT_FILE")
+    # Skip well-known router/index files that use the same underscore convention
+    case "$BASENAME" in
+      _SESSION_LOG.md|_SESSION_ARCHIVE.md|_INDEX.md|_MASTER.md|_PENDING.md|_CONVENTIONS.md|_README.md) continue ;;
+    esac
+    echo "=== AGENT IDENTITY (auto-injected: $BASENAME) ==="
+    cat "$AGENT_FILE"
+    echo ""
+  done
 fi
 
 # Inject session log (Current State section is the most critical part)

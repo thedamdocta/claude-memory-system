@@ -52,7 +52,7 @@ summary: >
 
 ## Path Encoding Reference
 Claude's project directory uses this encoding:
-- `/Users/devon/my-project` → `-Users-devon-my-project`
+- `/Users/you/my-project` → `-Users-you-my-project`
 - Rule: replace all `/` with `-`, prepend `-`
 
 The script handles this automatically. You should never need to encode paths manually.

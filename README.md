@@ -37,7 +37,7 @@ CLI tools Claude calls for vault operations.
 
 | Tool | Purpose |
 |------|---------|
-| `vault-query.py` | Search vault by frontmatter metadata (type, tag, status, related). Token-cheap — reads only YAML headers. |
+| `vault-query.py` | Search vault by frontmatter metadata (`--query` for title/aliases/name, `--type`, `--tag`, `--status`, `--related`). Token-cheap — reads only YAML headers. |
 | `vault_lib.py` | Shared library — frontmatter parsing, vault walking, layer classification, size measurement |
 | `memory-query.py` | Fact index CRUD — add, query, update, delete facts with relevance scoring |
 | `memory_lib.py` | Core memory library — indexing, search, management |

@@ -7,8 +7,8 @@
 # Handles: wikilinks [[Old Name]], plain text, frontmatter related fields, aliases
 #
 # Examples:
-#   vault-rename.sh "The Outsider Scientist" "Dr Hamick Maynewton" __VAULT_PATH__
-#   vault-rename.sh "Furloon" "Furcrow" __VAULT_PATH__
+#   vault-rename.sh "OldPlaceholder" "FinalName" __VAULT_PATH__
+#   vault-rename.sh "OldTerm" "NewTerm" __VAULT_PATH__
 
 set -euo pipefail
 

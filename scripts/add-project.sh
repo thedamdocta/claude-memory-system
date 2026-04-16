@@ -5,7 +5,7 @@
 # Usage:
 #   ./add-project.sh --name "My Project" --path /path/to/project
 #   ./add-project.sh --name "My Project"                          # uses current directory
-#   ./add-project.sh --name "My Project" --agent-name "Ori"       # optional agent name
+#   ./add-project.sh --name "My Project" --agent-name "Sage"      # optional agent name (pick your own)
 #
 # What this creates:
 #   1. Vault file:         ~/.claude/memory-vault/<project-name>.md
@@ -113,7 +113,7 @@ COMPACTIONS_DIR="$PROJECT_PATH/compactions"
 TODAY=$(date +%Y-%m-%d)
 
 # Encode path for Claude's project directory format:
-# /Users/devon/my-project → -Users-devon-my-project
+# /Users/you/my-project → -Users-you-my-project
 ENCODED_PATH=$(echo "$PROJECT_PATH" | sed 's|/|-|g' | sed 's|^-||')
 PROJECT_MEMORY_DIR="$CLAUDE_DIR/projects/-${ENCODED_PATH}/memory"
 MEMORY_FILE="$PROJECT_MEMORY_DIR/MEMORY.md"

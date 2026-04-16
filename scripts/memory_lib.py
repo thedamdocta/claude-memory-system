@@ -598,7 +598,7 @@ def classify_fact_type(content: str, section: str) -> str:
         scores['bug'] += 3.0
 
     # Medium bug signals: require technical context to avoid matching
-    # narrative "broke" (Jiro broke out, Laz broke the bathroom)
+    # narrative uses of "broke" (e.g., "he broke out of the room")
     if has_tech_context:
         if re.search(r'\b(?:bug|error|broke|broken|wrong|failed|failing|issue|problem)\b', lowered):
             scores['bug'] += 2.0
@@ -1340,39 +1340,13 @@ _FTS5_OPERATORS = {'AND', 'OR', 'NOT', 'NEAR'}
 # When any member appears in a query, the query is expanded to OR all members.
 # Case-insensitive matching; original case preserved in output.
 _SYNONYM_GROUPS: list[frozenset[str]] = [
-    # --- Division Talon codenames <-> real names ---
-    frozenset({'Gunraven', 'Tori'}),
-    frozenset({'Steelosprey', 'Jean'}),
-    frozenset({'Bulletwing', 'Hawke'}),
-    frozenset({'Nightsparrow', 'Eulalia'}),
-    frozenset({'Darkowl', 'Onenji'}),
-    frozenset({'Stonerobin', 'Fredrik'}),
-    frozenset({'Hellhawk', 'Nems'}),
-    frozenset({'Furcrow', 'Suki'}),
-    frozenset({'Phantomgull', 'Saori'}),
-    frozenset({'Ghostfalcon', 'Yuski'}),
-    frozenset({'Stormeagle', 'Bethi'}),
-    frozenset({'Bloodvulture', 'Orinjiro'}),
-    frozenset({'Duskcrane', 'Jubei'}),
-    frozenset({'Confuzzles', 'Pandy'}),
-    # --- Division Harrier codenames ---
-    frozenset({'Tenacity', 'Helios'}),
-    frozenset({'Clawmenace', 'Runo'}),
-    # --- Deyu Raiyu codenames <-> real names ---
-    frozenset({'Conspiracy', 'Yume'}),
-    frozenset({'Causality', 'Aurelian'}),
-    frozenset({'Fallacy', 'Juko'}),
-    frozenset({'Animosity', 'Hori'}),
-    frozenset({'Obscurity', 'Thoriris'}),
-    frozenset({'Calamity', 'Manisol'}),
-    # --- Lore term synonyms ---
-    frozenset({'Motherland of Sol', 'Ancient SolMoria', "Sol'Moria", 'SolMoria'}),
-    frozenset({"Mori'thal", 'Morithal'}),
-    frozenset({"Hal'mika", 'Halmika'}),
-    frozenset({"King's Hand", 'Kings Hand'}),
-    frozenset({'Deyu Raiyu', 'DR'}),
-    frozenset({'Eemaki', 'shadow creatures'}),
-    frozenset({"Ma'thalune", 'Mathalune'}),
+    # Populate with project-specific synonym groups.
+    # Example patterns:
+    #   frozenset({'CodeName', 'RealName'}),                # alias <-> name
+    #   frozenset({'Term', 'TermAlt', 'TermVariant'}),      # spelling variants
+    #   frozenset({'FullName', 'Abbreviation'}),            # acronym <-> full
+    # When any member appears in a query, the query auto-expands to OR all members.
+    # Add entries that match your project's terminology.
 ]
 
 # Build a lookup: lowercase term -> frozenset of all synonyms (original case).
@@ -1452,7 +1426,7 @@ def expand_synonyms(query: str) -> str:
             continue
 
         # Strip trailing punctuation for lookup (FTS5 tokenizer ignores it,
-        # but it prevents matching "Gunraven?" against "gunraven").
+        # but it prevents matching "TermName?" against "termname").
         stripped = token.rstrip('?!.,;:')
         stripped_lower = stripped.lower()
         if stripped_lower in _SYNONYM_LOOKUP:

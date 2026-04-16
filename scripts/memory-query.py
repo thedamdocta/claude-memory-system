@@ -6,13 +6,13 @@ Uses SQLite FTS5 BM25 for ranked text search with strength/decay scoring.
 Called by the agent during sessions to find relevant facts.
 
 Usage:
-    memory-query.py --query "Yume identity" --limit 10
-    memory-query.py --query "redemption" --type decision
-    memory-query.py --session 66m
+    memory-query.py --query "authentication" --limit 10
+    memory-query.py --query "refactor" --type decision
+    memory-query.py --session 12
     memory-query.py --stats
     memory-query.py --decay [--dry-run]
-    memory-query.py --query "Lux" --format json
-    memory-query.py --add "fact content here" --type lesson --importance 5 --session-id 66m
+    memory-query.py --query "deploy" --format json
+    memory-query.py --add "fact content here" --type lesson --importance 5 --session-id 12
     memory-query.py --get <FACT_ID>
     memory-query.py --get <FACT_ID> --format json
     memory-query.py --update <FACT_ID> --importance 5
@@ -342,15 +342,15 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog='''\
 examples:
-  %(prog)s --query "Yume identity" --limit 10
-  %(prog)s --query "redemption" --type decision
+  %(prog)s --query "authentication" --limit 10
+  %(prog)s --query "refactor" --type decision
   %(prog)s --query "hook infrastructure" --type architecture --limit 5
-  %(prog)s --session 66m
+  %(prog)s --session 12
   %(prog)s --stats
   %(prog)s --decay
   %(prog)s --decay --dry-run
-  %(prog)s --query "Lux" --format json
-  %(prog)s --query "Lux" --format compact
+  %(prog)s --query "deploy" --format json
+  %(prog)s --query "deploy" --format compact
   %(prog)s --get abc123def456
   %(prog)s --get abc123def456 --format json
   %(prog)s --update abc123def456 --importance 5

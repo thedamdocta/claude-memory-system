@@ -69,7 +69,7 @@ These are patterns that cause real problems. They were discovered the hard way a
 ### Tool Usage
 | Mistake | What Actually Works |
 |---------|-------------------|
-| Using Grep for vault-wide metadata searches | Use `vault-query.py` first — it reads only YAML frontmatter, costs almost zero tokens. Fall back to Grep only for content searches. |
+| Using Grep for vault-wide metadata searches | Use `vault-query.py` first (`--query` for name/title/aliases, `--type`/`--tag`/`--status`/`--related` for metadata) — it reads only YAML frontmatter, costs almost zero tokens. Fall back to Grep only for content searches. |
 | Using `browser-use` for web automation | Use `agent-browser` for ALL browser automation. Check the project's CLAUDE.md for the correct tool. |
 | Guessing at file contents or lore details | ALWAYS search the vault first. Never fabricate or assume details. |
 
@@ -103,7 +103,7 @@ These corrections were discovered across 66+ sessions of real production use. Th
 | 15 | Session | Batching session log updates to end of session | Context can compact at any time. Write to session log after every significant milestone. |
 | 16 | Session | Didn't checkpoint live state during multi-step work; lost progress on compaction | Maintain `.state` file continuously during multi-step tasks — update after every step, not reactively. |
 | 17 | Agents | Ran 3,498-contact API import as single sequential background task (~35 min blocking) | For large imports, split into parallel agent batches. Use `--start`/`--limit` parameters. Doesn't block conversation and is more resilient to failures. |
-| 18 | Tools | Using Grep for vault-wide metadata searches | Use `vault-query.py` first — reads only YAML frontmatter, costs almost zero tokens. Fall back to Grep only for content searches. |
+| 18 | Tools | Using Grep for vault-wide metadata searches | Use `vault-query.py` first (`--query` for name/title/aliases, `--type`/`--tag`/`--status`/`--related` for metadata) — reads only YAML frontmatter, costs almost zero tokens. Fall back to Grep only for content searches. |
 | 19 | Tools | Guessing at file contents or lore details | ALWAYS search the vault first. Never fabricate or assume details. |
 | 20 | Infra | Writing behavioral rules and hoping they stick | Build structural walls (hooks with `exit 2`), not text rules. If a rule is violated even once after being written down, escalate to structural enforcement. |
 | 21 | Infra | Not verifying after migrations or refactors | Always run a verification pass after any bulk operation. "Trust but verify." |

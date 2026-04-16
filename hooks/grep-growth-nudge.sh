@@ -52,7 +52,7 @@ fi
 jq -n '{
   "hookSpecificOutput": {
     "hookEventName": "PreToolUse",
-    "additionalContext": "Growth tools nudge: You are about to Grep the vault broadly. Try these first:\n  - memory-query.py --query \"your search\" (indexed facts, ranked results)\n  - vault-query.py --read-section \"file.md\" \"Section\" (targeted section read)\n  - vault-query.py --type/--tag/--status (frontmatter search)\nIf these fail, Grep is fine as fallback — then note what the tool could not do so you can improve it."
+    "additionalContext": "Growth tools nudge: You are about to Grep the vault broadly. Try these first:\n  - memory-query.py --query \"your search\" (indexed facts, ranked results)\n  - vault-query.py --query \"name\" (find file by title/aliases/name — case-insensitive substring)\n  - vault-query.py --read-section \"file.md\" \"Section\" (targeted section read)\n  - vault-query.py --type/--tag/--status/--related (frontmatter search)\nIf these fail, Grep is fine as fallback — then note what the tool could not do so you can improve it."
   }
 }'
 

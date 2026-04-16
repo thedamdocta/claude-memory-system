@@ -452,6 +452,14 @@ else
   echo "  Working profile already exists, skipping"
 fi
 
+# Copy chain-check protocol (cross-agent DONE-receipt discipline)
+if [ ! -f "$CLAUDE_DIR/memory-vault/chain-check.md" ]; then
+  cp "$SCRIPT_DIR/templates/chain-check.md" "$CLAUDE_DIR/memory-vault/chain-check.md"
+  echo "  Created chain-check.md (chain-check protocol, auto-injected every session)"
+else
+  echo "  Chain-check protocol already exists, skipping"
+fi
+
 echo ""
 echo -e "${BLUE}--- Step 8: Set up CLAUDE.md ---${NC}"
 

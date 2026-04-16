@@ -37,7 +37,7 @@ a previous session. Also when the user asks "do you remember" or references past
 - Do not hedge when you have sufficient data from the index. If 3+ results agree, commit to the answer.
 - Do not re-search for things already answered in the current conversation.
 - Do not read whole vault files when a targeted search would suffice.
-- Remember that synonym expansion is automatic for codenames (Gunraven/Tori, etc.) but not for general terms.
+- Remember that synonym expansion is automatic for groups configured in `memory_lib.py` `_SYNONYM_GROUPS` (project-specific — e.g., codename↔name pairs, spelling variants) but not for general terms.
 
 ## Verification
 - The answer should cite which facts or sessions it came from.

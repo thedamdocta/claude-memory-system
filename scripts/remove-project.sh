@@ -123,7 +123,7 @@ SESSION_LOG="$PROJECT_PATH/_SESSION_LOG.md"
 COMPACTIONS_DIR="$PROJECT_PATH/compactions"
 
 # Encode path for Claude's project directory format:
-# /Users/devon/my-project -> -Users-devon-my-project
+# /Users/you/my-project -> -Users-you-my-project
 ENCODED_PATH=$(echo "$PROJECT_PATH" | sed 's|/|-|g' | sed 's|^-||')
 PROJECT_MEMORY_DIR="$CLAUDE_DIR/projects/-${ENCODED_PATH}/memory"
 MEMORY_FILE="$PROJECT_MEMORY_DIR/MEMORY.md"
