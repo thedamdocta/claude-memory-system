@@ -32,14 +32,36 @@ _ort_session = None
 _tokenizer = None
 
 
+def _ensure_model() -> bool:
+    """Download the embedding model if not present. One-time ~90MB download."""
+    if os.path.exists(MODEL_PATH) and os.path.exists(TOKENIZER_PATH):
+        return True
+    try:
+        from huggingface_hub import hf_hub_download
+        os.makedirs(MODEL_DIR, exist_ok=True)
+        print("Downloading embedding model (~90MB, one-time)...", file=sys.stderr)
+        hf_hub_download(repo_id='sentence-transformers/all-MiniLM-L6-v2',
+                       filename='onnx/model.onnx', local_dir=MODEL_DIR)
+        hf_hub_download(repo_id='sentence-transformers/all-MiniLM-L6-v2',
+                       filename='tokenizer.json', local_dir=MODEL_DIR)
+        print("Model downloaded.", file=sys.stderr)
+        return True
+    except ImportError:
+        print("huggingface_hub not installed. Run: pip install huggingface_hub", file=sys.stderr)
+        return False
+    except Exception as e:
+        print(f"Model download failed: {e}", file=sys.stderr)
+        return False
+
+
 def is_available() -> bool:
-    """Check if embedding model + deps are available."""
+    """Check if embedding deps are installed. Auto-downloads model if missing."""
     try:
         import onnxruntime  # noqa: F401
         import tokenizers  # noqa: F401
-        return os.path.exists(MODEL_PATH) and os.path.exists(TOKENIZER_PATH)
     except ImportError:
         return False
+    return _ensure_model()
 
 
 def _load_model():
@@ -48,6 +70,7 @@ def _load_model():
     if _ort_session is not None:
         return
 
+    _ensure_model()
     import onnxruntime as ort
     from tokenizers import Tokenizer
 

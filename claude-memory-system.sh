@@ -612,11 +612,42 @@ else
 fi
 
 echo ""
-echo -e "${BLUE}--- Optional: Semantic search ---${NC}"
-echo "  For vector-embedding search (semantic/meaning-based):"
-echo "    pip install onnxruntime tokenizers huggingface_hub"
-echo "  Then run: vault-query.py --index"
-echo "  Without these, BM25 keyword search still works."
+echo -e "${BLUE}--- Step 11: Install semantic search (embedding model) ---${NC}"
+
+SEMANTIC_OK=false
+if command -v pip3 &>/dev/null; then
+  pip3 install --break-system-packages --quiet onnxruntime tokenizers huggingface_hub 2>/dev/null && {
+    echo "  Installed: onnxruntime, tokenizers, huggingface_hub"
+    SEMANTIC_OK=true
+  } || {
+    pip3 install --user --quiet onnxruntime tokenizers huggingface_hub 2>/dev/null && {
+      echo "  Installed (user): onnxruntime, tokenizers, huggingface_hub"
+      SEMANTIC_OK=true
+    } || echo -e "  ${YELLOW}Semantic search deps failed to install. BM25 keyword search still works.${NC}"
+  }
+elif command -v pip &>/dev/null; then
+  pip install --break-system-packages --quiet onnxruntime tokenizers huggingface_hub 2>/dev/null && {
+    echo "  Installed: onnxruntime, tokenizers, huggingface_hub"
+    SEMANTIC_OK=true
+  } || echo -e "  ${YELLOW}Semantic search deps failed to install. BM25 keyword search still works.${NC}"
+else
+  echo -e "  ${YELLOW}pip not found — semantic search requires: pip install onnxruntime tokenizers huggingface_hub${NC}"
+fi
+
+if [ "$SEMANTIC_OK" = true ]; then
+  echo "  Downloading embedding model (~90MB, one-time)..."
+  python3 -c "
+import sys, os
+sys.path.insert(0, '$CLAUDE_DIR/scripts')
+from vault_embeddings import _ensure_model
+_ensure_model()
+" 2>&1 | sed 's/^/  /'
+fi
+
+echo ""
+echo -e "${BLUE}--- Step 12: Build search index ---${NC}"
+echo "  Building search index for your vault..."
+python3 "$CLAUDE_DIR/scripts/vault-query.py" --index --root "$VAULT_PATH" 2>&1 | sed 's/^/  /'
 
 echo ""
 echo -e "${GREEN}========================================${NC}"
