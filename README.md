@@ -25,6 +25,7 @@ Claude can't accidentally break them because they run before/after every tool ca
 | `vault-router-cap.sh` | PreToolUse:Write/Edit | Blocks writes that would make router files (indexes) too large |
 | `vault-moc-cap.sh` | PreToolUse:Write/Edit | Blocks writes with bloated MOC (Map of Content) entries |
 | `vault-leaf-warn.sh` | PreToolUse:Write/Edit | Warns when content files approach size limits (20KB) |
+| `vault-schema-check.sh` | PreToolUse:Write | Validates frontmatter against `vault-schema.json` on every Write — blocks invalid files with specific error messages |
 | `resize-image.sh` | PreToolUse:Read | Resizes images before Claude reads them (saves tokens) |
 | `memory-capture.sh` | PostToolUse:Write | Captures write events for memory tracking |
 | `memory-nudge-counter.sh` | UserPromptSubmit | Tracks memory tool usage patterns |
@@ -37,7 +38,7 @@ CLI tools Claude calls for vault operations.
 
 | Tool | Purpose |
 |------|---------|
-| `vault-query.py` | Search vault by frontmatter metadata (`--query` for title/aliases/name, `--type`, `--tag`, `--status`, `--related`). Token-cheap — reads only YAML headers. |
+| `vault-query.py` | Swiss-army vault search: `--query` (name/codename lookup), `--content` (body text search with OR and match location), `--search` (ranked search: BM25 standalone, vector if available, hybrid default), `--index` (build/rebuild search indexes, auto-reindex when stale). Filter with `--type`, `--tag`, `--status`, `--related`, `--path` (subdirectory). `--context N` shows surrounding lines. Enforces schema via `vault-schema.json` when present. |
 | `vault_lib.py` | Shared library — frontmatter parsing, vault walking, layer classification, size measurement |
 | `memory-query.py` | Fact index CRUD — add, query, update, delete facts with relevance scoring |
 | `memory_lib.py` | Core memory library — indexing, search, management |
@@ -45,6 +46,8 @@ CLI tools Claude calls for vault operations.
 | `memory-consolidate.py` | Consolidate fragmented memory files |
 | `vault-health-check.py` | Validate vault structure — checks for orphans, broken refs, size violations |
 | `session-log-rotate.py` | Rotate and archive old session log entries |
+| `vault_embeddings.py` | Optional vector embedding search. Auto-detected by vault-query.py. Requires: onnxruntime, tokenizers. |
+| `vault-schema-check.py` | Validates file frontmatter against `vault-schema.json`. Called by the schema enforcement hook. |
 | `count_tokens.py` | Estimate token count for text (requires tiktoken) |
 
 ### Layer 3: Vault Structure (Obsidian)
@@ -125,6 +128,32 @@ unregistered working directory. The procedure is at `~/.claude/procedures/shared
 ```
 
 The full template for manual setup is still available in `~/.claude/memory-vault/_MASTER.md`.
+
+## Search Capabilities
+
+### Keyword Search (standalone, zero dependencies)
+```bash
+vault-query.py --content "search term"                    # substring match
+vault-query.py --content "term1|term2|term3"              # OR search
+vault-query.py --content "term" --type episode --path Episodes/ --context 2
+```
+
+### Ranked Search (BM25, standalone)
+```bash
+vault-query.py --index                     # build search index (run once)
+vault-query.py --search "grief and loss"   # ranked by relevance
+```
+
+### Semantic Search (optional, requires onnxruntime)
+```bash
+pip install onnxruntime tokenizers huggingface_hub   # one-time
+vault-query.py --index                               # downloads model + indexes
+vault-query.py --search "characters hiding their true nature"  # meaning-based
+```
+When both BM25 and vector indexes exist, `--search` automatically uses hybrid mode (combines both for best results).
+
+### Schema Enforcement
+Copy `vault-schema.json` to your vault root. Customize required fields per file type. The PreToolUse hook validates frontmatter on every Write — blocks invalid files with specific error messages. No schema file = no enforcement.
 
 ## Customization
 

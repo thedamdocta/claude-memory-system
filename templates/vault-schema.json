@@ -1,0 +1,21 @@
+{
+  "defaults": {
+    "required": ["title", "type", "status", "tags", "updated"]
+  },
+  "types": {
+    "character": {
+      "required": ["title", "type", "name", "status", "tags", "updated", "aliases", "related", "summary"],
+      "allowed_status": ["active", "draft", "archived"]
+    },
+    "episode": {
+      "required": ["title", "type", "status", "tags", "updated", "related", "summary"],
+      "allowed_status": ["early-draft", "draft", "locked", "complete"]
+    },
+    "lore": {
+      "required": ["title", "type", "status", "tags", "updated", "related", "summary"]
+    },
+    "moc": {
+      "required": ["title", "type", "status", "tags", "updated", "related", "summary"]
+    }
+  }
+}

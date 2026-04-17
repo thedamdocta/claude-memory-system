@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-vault_lib.py — Shared library for MyProject vault three-layer architecture.
+vault_lib.py — Shared library for vault three-layer architecture.
 
 Provides frontmatter parsing, vault walking, layer classification, and file
 measurement for the enforcement hooks and query tooling.
@@ -19,7 +19,7 @@ LEAF_WARN_THRESHOLD = 0.8  # 80%
 DEFAULT_VAULT_ROOT = "__VAULT_PATH__"
 
 # Directories to skip during vault walk
-SKIP_DIRS = {".git", "node_modules", ".claude", "__pycache__", ".venv", "venv"}
+SKIP_DIRS = {".git", "node_modules", ".claude", "__pycache__", ".venv", "venv", "_workspace"}
 
 
 def parse_frontmatter(path: str) -> dict:
@@ -175,7 +175,7 @@ def classify_layer(frontmatter: dict, path: str) -> str:
         return 'moc'
     if fm_type in ('meta', 'research', 'plan'):
         return 'meta'
-    if fm_type in ('leaf', 'synthesis', 'character', 'episode', 'lore', 'faction'):
+    if fm_type in ('leaf', 'synthesis', 'character', 'episode', 'lore', 'faction', 'reference', 'guide', 'analysis'):
         return 'leaf'
 
     # MOC patterns

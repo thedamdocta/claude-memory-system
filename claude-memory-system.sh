@@ -202,6 +202,7 @@ echo -e "${BLUE}--- Step 1: Create directories ---${NC}"
 mkdir -p "$CLAUDE_DIR/hooks"
 mkdir -p "$CLAUDE_DIR/scripts"
 mkdir -p "$CLAUDE_DIR/procedures/shared"
+mkdir -p "$CLAUDE_DIR/templates"
 mkdir -p "$CLAUDE_DIR/memory-vault"
 mkdir -p "$VAULT_PATH"
 mkdir -p "$VAULT_PATH/compactions"
@@ -378,6 +379,15 @@ cat > "$SETTINGS_FILE" << SETTINGS_EOF
         ]
       },
       {
+        "matcher": "Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$CLAUDE_DIR/hooks/vault-schema-check.sh"
+          }
+        ]
+      },
+      {
         "matcher": "Edit|Write|Bash|Task",
         "hooks": [
           {
@@ -458,6 +468,12 @@ if [ ! -f "$CLAUDE_DIR/memory-vault/chain-check.md" ]; then
   echo "  Created chain-check.md (chain-check protocol, auto-injected every session)"
 else
   echo "  Chain-check protocol already exists, skipping"
+fi
+
+# Copy schema template (not activated by default — user copies to vault root when ready)
+if [ -f "$SCRIPT_DIR/templates/vault-schema.json" ]; then
+  cp "$SCRIPT_DIR/templates/vault-schema.json" "$CLAUDE_DIR/templates/vault-schema.json"
+  echo "  Installed: vault-schema.json (template — copy to vault root to activate)"
 fi
 
 echo ""
@@ -594,6 +610,13 @@ elif command -v pip &>/dev/null; then
 else
   echo -e "  ${YELLOW}pip not found — install tiktoken manually: pip install tiktoken${NC}"
 fi
+
+echo ""
+echo -e "${BLUE}--- Optional: Semantic search ---${NC}"
+echo "  For vector-embedding search (semantic/meaning-based):"
+echo "    pip install onnxruntime tokenizers huggingface_hub"
+echo "  Then run: vault-query.py --index"
+echo "  Without these, BM25 keyword search still works."
 
 echo ""
 echo -e "${GREEN}========================================${NC}"
