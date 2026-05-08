@@ -287,15 +287,16 @@ def append_to_archive(project_dir: str, row: list[str]) -> None:
 
 def rotate_oldest(parsed: dict, project_dir: str) -> str:
     """
-    If table has > 10 rows, rotate the oldest (first) row to the archive.
+    If table has > 10 rows, rotate the oldest (last) row to the archive.
+    Table is newest-first: newest at index 0, oldest at end.
     Returns the session ID of the rotated row, or None.
     """
     if len(parsed["rows"]) <= 10:
         return None
 
-    oldest = parsed["rows"].pop(0)
+    oldest = parsed["rows"].pop(-1)
     if parsed["raw_rows"]:
-        parsed["raw_rows"].pop(0)
+        parsed["raw_rows"].pop(-1)
 
     append_to_archive(project_dir, oldest)
     return oldest[0].strip() if oldest else None
@@ -303,9 +304,9 @@ def rotate_oldest(parsed: dict, project_dir: str) -> str:
 
 def do_add(parsed: dict, session_id: str, focus: str, decisions: str,
            detail: str) -> str:
-    """Insert a new row. Returns status message."""
+    """Insert a new row at the top (newest-first ordering). Returns status message."""
     new_row = [session_id, focus, decisions, detail]
-    parsed["rows"].append(new_row)
+    parsed["rows"].insert(0, new_row)
     return f"Added session {session_id}"
 
 
@@ -343,14 +344,14 @@ def do_auto(parsed: dict, fields: dict) -> str:
                 return f"Updated detail for session {session_id} (no new links)"
         return f"Updated detail for session {session_id} (no new links)"
     else:
-        # New row
+        # New row — insert at top (newest-first ordering)
         new_row = [
             session_id,
             fields["focus"],
             fields["decisions"],
             fields["detail"],
         ]
-        parsed["rows"].append(new_row)
+        parsed["rows"].insert(0, new_row)
         return f"Added session {session_id}"
 
 
