@@ -1,27 +1,28 @@
 #!/usr/bin/env python3
 """
-vault-query.py — CLI for querying the vault by frontmatter.
+vault-query.py — CLI for querying ANY Obsidian vault by frontmatter, full text,
+or hybrid semantic search.
 
 Query vault files by type, tag, status, related links, and update date.
 Returns markdown table (default) or TSV/JSON.
 
 Usage:
     vault-query.py --type moc
-    vault-query.py --tag research --status active
-    vault-query.py --related "ProjectRoot" --with-summary
-    vault-query.py --query "WidgetName"                       # search title/aliases/name
-    vault-query.py --content "project concept"                # search body text
-    vault-query.py --content "api|auth|deploy"                # OR search (any term matches)
-    vault-query.py --content "deploy" --path docs/            # search only docs directory
-    vault-query.py --content "deploy" --type leaf             # body search narrowed by type
-    vault-query.py --not-content "deprecated" --type leaf     # leaves WITHOUT "deprecated"
-    vault-query.py --index                                    # build BM25 search index (run first)
-    vault-query.py --search "project architecture"            # BM25 ranked search
-    vault-query.py --search "hidden features" --search-limit 5
-    vault-query.py --query "auth" --type leaf                 # combine with other filters
+    vault-query.py --tag character --status active
+    vault-query.py --related "Yume" --with-summary
+    vault-query.py --query "Pandy"                          # search title/aliases/name
+    vault-query.py --content "bright side"                  # search body text
+    vault-query.py --content "bar|fight|beat"               # OR search (any term matches)
+    vault-query.py --content "miracle" --path Episodes/      # search only episodes directory
+    vault-query.py --content "miracle" --type episode       # body search narrowed by type
+    vault-query.py --not-content "sickness" --type episode  # episodes WITHOUT "sickness"
+    vault-query.py --index                                  # build BM25 search index (run first)
+    vault-query.py --search "grief and loss"                # BM25 ranked search
+    vault-query.py --search "hidden abilities" --search-limit 5
+    vault-query.py --query "bright" --type character        # combine with other filters
     vault-query.py --updated-since 2026-04-01 --format json
-    vault-query.py --read-section "Plan.md" "Open Questions"
-    vault-query.py --read-section "Design.md" "Overview" --with-summary
+    vault-query.py --read-section "EP 01 - Be Careful Where You End Up.md" "Open Questions"
+    vault-query.py --read-section "Laz - The Ender of Worlds.md" "Power" --with-summary
 """
 
 import argparse
@@ -36,7 +37,8 @@ from pathlib import Path
 
 # Import from vault_lib in same directory
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from vault_lib import walk_vault, parse_frontmatter, DEFAULT_VAULT_ROOT
+from vault_lib import (walk_vault, parse_frontmatter, DEFAULT_VAULT_ROOT,
+                       resolve_vault_root, discover_vaults)
 
 
 def resolve_file(filename: str, vault_root: str) -> str:
@@ -449,6 +451,34 @@ def handle_read_section(args) -> None:
         sys.exit(1)
 
 
+# Per-mode thresholds — scores live on different scales per search mode.
+# Vector: cosine-similarity, 0-1 range; ~0.35 separates signal from nearest-neighbor noise.
+# Hybrid: 2026-07-26 (RL-067) — hybrid mode no longer uses a score threshold
+# here at all. The RRF-combined score conflates two different questions ("how
+# well did the top hit match" and "how many engines independently found it"),
+# and a single engine can never clear a threshold calibrated for two-engine
+# agreement (single-source ceiling 1/61 = 0.0164; two-source ceiling
+# 1/61 + 1/61 = 0.0328) even when that one engine ranked the hit #1. See
+# hybrid_search()'s `match_rank` and the confidence check in main(), which
+# judges match quality from the best single-engine rank instead. (Earlier
+# history, for context: the threshold used to be 0.05, then 0.108, both
+# calibrated against a since-fixed bug where RRF accumulated once per
+# matching SECTION of a file rather than once per file — a dormant note with
+# 13 tiny sections could outrank the right answer. Fixed same day the
+# threshold was lowered to 0.02, which is what this comment is now revising.)
+# BM25: raw FTS5 rank is unbounded-negative and mode-specific — not thresholded here.
+# Tune from a larger real-query corpus when one exists.
+LOW_CONFIDENCE_THRESHOLDS = {
+    'vector': 0.35,
+}
+
+# Hybrid confidence floor: the best (lowest) 0-indexed rank a hit must have
+# achieved in AT LEAST ONE engine's own ranked list to be reported without a
+# warning. 2 = top-3 in some engine. Deliberately loose (see RL-067): a
+# correct top hit wrongly labelled low-confidence is a smaller error than the
+# reverse (a wrong hit labelled confident), so this errs toward not warning.
+HYBRID_CONFIDENT_RANK = 2
+
 _body_cache: dict[str, tuple] = {}
 
 def _get_body(path: str) -> tuple:
@@ -488,27 +518,67 @@ _STOP_WORDS = frozenset(
 
 
 def build_search_index(vault_root: str) -> int:
-    """Build/rebuild the FTS5 search index from vault files."""
+    """Build/rebuild the FTS5 search index from vault files.
+
+    2026-07-26 (RL-067, hybrid-merge unit mismatch). This used to insert ONE
+    row per FILE, while the vector index (vault_embeddings.build_vector_index)
+    has always indexed per SECTION via `_split_sections`. hybrid_search merged
+    the two by file path, so a file with a strong BM25 hit on section A and a
+    strong vector hit on unrelated section B produced a score that claimed
+    both methods agreed — while silently discarding BM25's actual match. See
+    docs/regression-ledger.md RL-067.
+
+    The fix is to make BM25 operate on the same unit as vector: split with the
+    IDENTICAL function, on the IDENTICAL body text, so a `(path, section)` key
+    means the same thing in both indexes and a combined score can only claim
+    agreement that actually happened. `_split_sections` has no heavy deps
+    (stdlib only), so importing it does not pull in onnxruntime/tokenizers —
+    BM25 indexing stays independent of whether vector search is installed.
+    """
     conn = sqlite3.connect(_db_path(vault_root, 'vault-search'))
     conn.execute('DROP TABLE IF EXISTS vault_fts')
     conn.execute('''
         CREATE VIRTUAL TABLE vault_fts USING fts5(
-            path, title, body,
+            path, title, section, body,
             tokenize='porter unicode61'
         )
     ''')
 
-    count = 0
+    try:
+        from vault_embeddings import _split_sections
+    except ImportError:
+        # Loud, not silent: a quiet fallback here would reintroduce the exact
+        # file/section unit mismatch this fix exists to close, while still
+        # returning a file count that looks like success. vault_embeddings.py
+        # lives in this same directory, so this should be unreachable outside
+        # a broken install — if it fires, something is actually wrong.
+        print("WARNING: vault_embeddings._split_sections unavailable — BM25 index "
+              "falling back to file-level rows (RL-067 unit-mismatch reintroduced "
+              "until vault_embeddings.py is restored).", file=sys.stderr)
+        _split_sections = None
+
+    count = 0  # files indexed (not sections) — matches this function's existing contract
     for filepath, fm, body_size in walk_vault(vault_root):
         body, _ = _get_body(filepath)
         if body is None or not body.strip():
             continue
         title = fm.get('title', os.path.basename(filepath))
         rel_path = os.path.relpath(filepath, vault_root)
-        conn.execute(
-            'INSERT INTO vault_fts(path, title, body) VALUES (?, ?, ?)',
-            (rel_path, title, body)
-        )
+
+        if _split_sections is not None:
+            sections = _split_sections(body, title)
+        else:
+            sections = [(title, body)]
+
+        for sec_title, sec_body in sections:
+            # Same floor as build_vector_index's section skip, so both
+            # indexes agree on which sections exist as addressable units.
+            if not sec_body.strip() or len(sec_body.strip()) < 20:
+                continue
+            conn.execute(
+                'INSERT INTO vault_fts(path, title, section, body) VALUES (?, ?, ?, ?)',
+                (rel_path, title, sec_title, sec_body)
+            )
         count += 1
 
     conn.commit()
@@ -541,9 +611,38 @@ def _is_index_stale(vault_root: str, index_path: str) -> bool:
     return False
 
 
+def _bm25_schema_is_current(db_path: str) -> bool:
+    """Check the FTS5 table has the 'section' column (2026-07-26, RL-067).
+
+    Every project shares this script and its cached DBs (one per vault root,
+    keyed by path hash) via ~/.claude/, and those DBs are NOT rebuilt just
+    because the .py file changed — only `_is_index_stale`'s mtime check
+    triggers a rebuild, and a schema change alone doesn't touch any vault
+    .md file's mtime. Without this check, a project that reindexed before
+    this fix would keep querying its old file-level table forever (or hit a
+    'no such column: section' error the moment bm25_search's new SELECT ran
+    against it) until someone thought to pass --index by hand.
+    """
+    if not os.path.exists(db_path):
+        return True  # doesn't exist yet — not "stale", just absent; build path handles it
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='vault_fts'")
+        if not cursor.fetchone():
+            conn.close()
+            return True  # no table at all yet
+        cursor = conn.execute("PRAGMA table_info(vault_fts)")
+        columns = {row[1] for row in cursor}
+        conn.close()
+        return 'section' in columns
+    except sqlite3.Error:
+        return False  # unreadable/corrupt — treat as needing a rebuild
+
+
 def _auto_reindex_bm25(vault_root: str) -> None:
-    """Auto-rebuild BM25 index if stale. Fast (~2s)."""
-    if _is_index_stale(vault_root, _db_path(vault_root, 'vault-search')):
+    """Auto-rebuild BM25 index if stale, or on the old file-level schema. Fast (~2s)."""
+    db_path = _db_path(vault_root, 'vault-search')
+    if _is_index_stale(vault_root, db_path) or not _bm25_schema_is_current(db_path):
         print("BM25 index stale — rebuilding...", file=sys.stderr)
         count = build_search_index(vault_root)
         print(f"BM25: re-indexed {count} files.", file=sys.stderr)
@@ -581,23 +680,36 @@ def bm25_search(raw_query: str, limit: int = 10, vault_root: str = '') -> list:
         return []
 
     conn = sqlite3.connect(db_path)
-    cursor = conn.execute('''
-        SELECT path, title,
-               snippet(vault_fts, 2, '>>>', '<<<', '...', 30) as snippet,
-               bm25(vault_fts) as rank
-        FROM vault_fts
-        WHERE vault_fts MATCH ?
-        ORDER BY bm25(vault_fts)
-        LIMIT ?
-    ''', (fts_query, limit))
+    try:
+        cursor = conn.execute('''
+            SELECT path, title, section,
+                   snippet(vault_fts, 3, '>>>', '<<<', '...', 30) as snippet,
+                   bm25(vault_fts) as rank
+            FROM vault_fts
+            WHERE vault_fts MATCH ?
+            ORDER BY bm25(vault_fts)
+            LIMIT ?
+        ''', (fts_query, limit))
+        rows = cursor.fetchall()
+    except sqlite3.OperationalError as e:
+        # Old file-level schema (pre-RL-067, no 'section' column) somehow
+        # survived the auto-reindex check — force a rebuild rather than
+        # crash or silently return nothing.
+        if 'no such column' in str(e):
+            conn.close()
+            print("BM25 index on old schema — rebuilding...", file=sys.stderr)
+            build_search_index(vault_root)
+            return bm25_search(raw_query, limit=limit, vault_root=vault_root)
+        raise
 
     results = []
-    for row in cursor:
+    for row in rows:
         results.append({
             'rel_path': row[0],
             'title': row[1],
-            'snippet': row[2].replace('>>>', '**').replace('<<<', '**'),
-            'rank': round(row[3], 3)
+            'section': row[2],
+            'snippet': row[3].replace('>>>', '**').replace('<<<', '**'),
+            'rank': round(row[4], 3)
         })
 
     conn.close()
@@ -606,7 +718,25 @@ def bm25_search(raw_query: str, limit: int = 10, vault_root: str = '') -> list:
 
 def hybrid_search(raw_query: str, limit: int = 10, vault_root: str = '') -> list:
     """Combine BM25 + vector search using Reciprocal Rank Fusion (RRF).
-    Documents found by both engines get boosted. Best of both worlds."""
+    Documents found by both engines get boosted. Best of both worlds.
+
+    2026-07-26 (RL-067, hybrid-merge unit mismatch). BM25 used to be
+    FILE-level while vector was SECTION-level, so this function merged them
+    by file path: a file with a strong BM25 hit on section A and a strong
+    vector hit on unrelated section B got a "both agree" ceiling score while
+    silently discarding section A's snippet. `bm25_search` is now
+    section-level too (same `_split_sections` as vector, same body text), so
+    the merge key below is `(path, section)` — a combined score can now only
+    mean what it says: the SAME section, not just the same file.
+
+    This also separates two things the old single RRF score conflated: how
+    WELL the top hit matched (best single-engine rank, tracked as
+    `match_rank`) vs. how MANY engines found it (`sources`, and the summed
+    score used for ranking). See the low-confidence check in main() for why
+    that distinction matters — a hit only BM25 found, at BM25's own #1, is
+    strong evidence; the old code judged it solely by the RRF sum, which a
+    single source can never make reach the two-source ceiling.
+    """
 
     bm25_results = bm25_search(raw_query, limit=30, vault_root=vault_root)
 
@@ -620,43 +750,62 @@ def hybrid_search(raw_query: str, limit: int = 10, vault_root: str = '') -> list
     except ImportError:
         pass
 
+    # Single-engine fallbacks still carry match_rank/sources so main()'s
+    # confidence check (which only special-cases mode == 'hybrid', and this
+    # IS reached via mode == 'hybrid') doesn't see missing fields and warn
+    # for the wrong reason.
+    #
+    # Tested adversarially with a gibberish query (found while validating this
+    # fix, not part of RL-067's original repro): when BM25 finds literally
+    # nothing, rank alone is a leniency trap. rank 0 here only means "the best
+    # of whatever vector found" — with vector_search's own MIN_SIMILARITY
+    # floor at 0.25, that can still be a weak, borderline match, and
+    # match_rank=0 would silently mark it confident regardless. BM25 has no
+    # comparable absolute scale (documented above at LOW_CONFIDENCE_THRESHOLDS
+    # — its own standalone mode is never thresholded either), so only the
+    # vector fallback gets this extra gate.
     if not vec_results:
-        return bm25_results[:limit]
+        results = bm25_results[:limit]
+        for rank, r in enumerate(results):
+            r['match_rank'] = rank
+            r['sources'] = 'BM25'
+        return results
     if not bm25_results:
-        return vec_results[:limit]
+        results = vec_results[:limit]
+        for rank, r in enumerate(results):
+            strong = r.get('score', 0) >= LOW_CONFIDENCE_THRESHOLDS['vector']
+            r['match_rank'] = rank if strong else rank + HYBRID_CONFIDENT_RANK + 1
+            r['sources'] = 'Vector'
+        return results
 
     # Reciprocal Rank Fusion (k=60, standard)
     k = 60
-    merged: dict[str, dict] = {}
+    merged: dict[tuple, dict] = {}
 
-    # BM25 contributions (file-level)
-    for rank, r in enumerate(bm25_results):
-        path = r['rel_path']
-        rrf = 1.0 / (k + rank + 1)
-        if path not in merged:
-            merged[path] = {'score': 0, 'result': dict(r), 'sources': set()}
-        merged[path]['score'] += rrf
-        merged[path]['sources'].add('BM25')
+    def _key(r: dict) -> tuple:
+        # Both engines now split the same body with the same function, so a
+        # matching (path, section) pair means the same passage in both.
+        # Fall back to title only if a row somehow has no section (shouldn't
+        # happen post-RL-067, kept defensive rather than crashing).
+        return (r['rel_path'], r.get('section') or r['title'])
 
-    # Vector contributions (section-level, deduplicate by file — keep best section)
-    seen_paths = {}
-    for rank, r in enumerate(vec_results):
-        path = r['rel_path']
-        rrf = 1.0 / (k + rank + 1)
+    def _contribute(source_name: str, rows: list) -> None:
+        for rank, r in enumerate(rows):
+            key = _key(r)
+            rrf = 1.0 / (k + rank + 1)
+            if key not in merged:
+                merged[key] = {'score': 0, 'result': dict(r), 'sources': set(), 'best_rank': rank}
+            else:
+                merged[key]['best_rank'] = min(merged[key]['best_rank'], rank)
+                # Same (path, section) confirmed by both engines — prefer the
+                # richer/more precise snippet if this contribution has one.
+                if r.get('snippet'):
+                    merged[key]['result']['snippet'] = r['snippet']
+            merged[key]['score'] += rrf
+            merged[key]['sources'].add(source_name)
 
-        if path not in merged:
-            merged[path] = {'score': 0, 'result': dict(r), 'sources': set()}
-
-        merged[path]['score'] += rrf
-        merged[path]['sources'].add('Vector')
-
-        # Use vector's section detail (more precise than BM25's file-level)
-        if path not in seen_paths:
-            seen_paths[path] = True
-            if r.get('section'):
-                merged[path]['result']['section'] = r['section']
-            if r.get('snippet'):
-                merged[path]['result']['snippet'] = r['snippet']
+    _contribute('BM25', bm25_results)
+    _contribute('Vector', vec_results)
 
     # Sort by combined RRF score (highest first)
     ranked = sorted(merged.values(), key=lambda x: x['score'], reverse=True)
@@ -666,9 +815,74 @@ def hybrid_search(raw_query: str, limit: int = 10, vault_root: str = '') -> list
         r = item['result']
         r['score'] = round(item['score'], 4)
         r['sources'] = '+'.join(sorted(item['sources']))
+        r['match_rank'] = item['best_rank']
         results.append(r)
 
     return results
+
+
+AGENT_GUIDE = """\
+vault-query - read this before you reach for grep
+=================================================
+
+WHAT THIS IS
+  Search across EVERY Obsidian vault on this machine at once: BM25 full text,
+  vector semantic search, hybrid of both, plus frontmatter filters and targeted
+  section read/write. Indexes build and refresh automatically.
+
+WHY IT EXISTS - THE POINT
+  A recursive grep over the home directory takes minutes, floods your context
+  with raw matches, and finds only literal strings. This returns ranked results
+  with snippets in about a second, and finds things that do not share your
+  wording. Two greps that timed out at 120s each are what prompted this note.
+
+  Reach for this FIRST. Grep is the fallback, not the default.
+
+SCOPE - the important part
+  no --root          ->  ALL vaults. Deliberate: the answer to "have I solved
+                         this before?" is often in another project's notes, and
+                         you cannot know which one in advance.
+  --this-vault       ->  only the vault containing the working directory
+  --root PATH        ->  only that vault
+  --list-vaults      ->  every vault found, and which is active
+
+  Results carry a Vault column when a search spans more than one, so you can
+  tell "some note says X" from "the credit project says X".
+
+WHAT IT CAN DO
+  --search "text"           ranked search; hybrid when a vector index exists
+  --content "text"          literal substring match
+  --query/--type/--tag/--status    frontmatter filters
+  --related NOTE            notes linking to NOTE
+  --updated-since DATE      recently touched notes
+  --read-section F HEADING  pull ONE section instead of a whole file
+  --write-section F HEADING targeted append/replace
+  --path SUBDIR             restrict to a subdirectory
+  --format json             machine-readable output
+
+WHAT IT CANNOT DO
+  * Only markdown inside Obsidian vaults (a directory holding .obsidian/).
+    Source code, PDFs and loose files elsewhere are invisible - grep those.
+  * Vector search needs onnxruntime + tokenizers. Without them it falls back to
+    BM25, which is literal, so semantically-phrased queries underperform.
+  * Cross-vault ranking is approximate. Scores compare within an engine and the
+    merge respects that, but a hit in a small vault can outrank a better hit in
+    a large one. Widen --search-limit if something seems missing.
+  * First query against a never-indexed vault is slow; every one after is fast.
+
+WHEN TO USE GREP INSTEAD
+  * Exact literal string and you already know the file.
+  * Code, config, or anything outside a vault.
+  * You need every occurrence, not the best ones.
+
+TYPICAL MOVES
+  vault-query.py --search "cloudflare blocks python user agent"
+  vault-query.py --this-vault --search "deployment traps"
+  vault-query.py --read-section ARCHITECTURE.md "Auth"
+  vault-query.py --type reference --tag topic/ghl
+
+  VAULT_QUERY_VERBOSE=1 prints the resolved scope to stderr.
+"""
 
 
 def format_search_results(results: list) -> None:
@@ -680,8 +894,19 @@ def format_search_results(results: list) -> None:
     title_w = max(len(r['title']) for r in results)
     title_w = min(title_w, 40)
 
-    print(f"{'#':<3} {'Title':<{title_w}} | Score | Snippet | Path")
-    print(f"{'---':<3} {'-' * title_w} | ----- | ------- | ----")
+    # When a search spans vaults, WHICH vault a hit came from is the single most
+    # useful column — it is the difference between "some note says X" and "the
+    # credit project says X".
+    vaults = {r.get('_vault') for r in results if r.get('_vault')}
+    multi = len(vaults) > 1
+    vault_w = min(max((len(v) for v in vaults), default=0), 22) if multi else 0
+
+    if multi:
+        print(f"{'#':<3} {'Vault':<{vault_w}} {'Title':<{title_w}} | Score | Snippet | Path")
+        print(f"{'---':<3} {'-' * vault_w} {'-' * title_w} | ----- | ------- | ----")
+    else:
+        print(f"{'#':<3} {'Title':<{title_w}} | Score | Snippet | Path")
+        print(f"{'---':<3} {'-' * title_w} | ----- | ------- | ----")
 
     for i, r in enumerate(results, 1):
         title = r['title']
@@ -693,7 +918,10 @@ def format_search_results(results: list) -> None:
         sources = r.get('sources', '')
         sec_str = f" §{section}" if section and section != title else ""
         src_str = f" [{sources}]" if sources else ""
-        print(f"{i:<3} {title:<{title_w}} | {score:<6} | {snippet} | {r['rel_path']}{sec_str}{src_str}")
+        lead = f"{i:<3} "
+        if multi:
+            lead += f"{(r.get('_vault') or '')[:vault_w]:<{vault_w}} "
+        print(f"{lead}{title:<{title_w}} | {score:<6} | {snippet} | {r['rel_path']}{sec_str}{src_str}")
 
 
 # =========================================================================
@@ -724,7 +952,7 @@ def matches_filters(fm: dict, path: str, layer: str, args) -> bool:
             return False
 
     # Type filter — matches EITHER the classified layer (router/moc/leaf/meta)
-    # OR the raw frontmatter type (e.g., character/episode/faction/lore/etc).
+    # OR the raw frontmatter type (character/episode/faction/lore/etc).
     # This way --type character works as expected even though classify_layer
     # returns "leaf" for character files.
     if args.type:
@@ -771,7 +999,7 @@ def matches_filters(fm: dict, path: str, layer: str, args) -> bool:
 
     # Content filter — substring search in body text (everything after frontmatter).
     # Heavier than other filters (reads full file). Composable with all other filters
-    # so you can narrow before searching: e.g., --type leaf --content "deploy steps"
+    # so you can narrow before searching: e.g., --type episode --content "bright side"
     if args.content or args.not_content:
         # Empty content/not-content matches nothing
         if args.content and not args.content.strip():
@@ -785,7 +1013,7 @@ def matches_filters(fm: dict, path: str, layer: str, args) -> bool:
         body_lower = body.lower()
 
         # Content filter — include only files containing term(s).
-        # Supports OR syntax: "api|auth|deploy" matches if ANY term is found.
+        # Supports OR syntax: "bar|fight|beat" matches if ANY term is found.
         # Single pass per file regardless of term count.
         if args.content:
             content_terms = [t.strip().lower() for t in args.content.split('|') if t.strip()]
@@ -935,14 +1163,27 @@ def main():
     ap.add_argument('--search-limit', type=int, default=10, help='Max results for --search (default: 10)')
     ap.add_argument('--search-mode', choices=['auto', 'bm25', 'vector', 'hybrid'], default='auto',
                    help='Force search mode: auto (hybrid if both available, else BM25), bm25, vector, or hybrid.')
-    ap.add_argument('--root', default=os.environ.get('CLAUDE_PROJECT_DIR', DEFAULT_VAULT_ROOT),
-                   help='Vault root (default: $CLAUDE_PROJECT_DIR or configured vault path)')
+    # No default here on purpose — resolve_vault_root() decides, and it reports
+    # which rule it used so a wrong vault is visible rather than silent.
+    ap.add_argument('--root', default=None,
+                   help='Vault root. Default: $VAULT_ROOT, else $CLAUDE_PROJECT_DIR, '
+                        'else the nearest .obsidian/ above the working directory.')
+    ap.add_argument('--list-vaults', action='store_true',
+                   help='List every Obsidian vault found under $HOME and exit.')
+    ap.add_argument('--all-vaults', action='store_true',
+                   help='Search EVERY vault (this is already the default when '
+                        '--root is omitted).')
+    ap.add_argument('--this-vault', action='store_true',
+                   help='Search only the vault containing the working directory.')
+    ap.add_argument('--how-to', action='store_true',
+                   help='Print the agent guide: what this tool can and cannot do, '
+                        'and when to use it instead of grep.')
     ap.add_argument('--context', '-C', type=int, default=0,
                    help='Show N lines of context around --content matches.')
     ap.add_argument('--format', choices=['markdown', 'tsv', 'json'], default='markdown',
                    help='Output format (default: markdown)')
     ap.add_argument('--path',
-                   help='Restrict search to files under this subdirectory of the vault (e.g., docs/, notes/).')
+                   help='Restrict search to files under this subdirectory of the vault (e.g., Episodes/, characters/).')
 
     try:
         args = ap.parse_args()
@@ -952,13 +1193,73 @@ def main():
             print("Tip: Use --content='---' (equals syntax) for values starting with dashes.", file=sys.stderr)
         raise
 
-    # No arguments — show help instead of dumping full vault
-    has_action = any([args.read_section, args.write_section, args.index, args.search,
-                      args.query, args.content, args.not_content, args.type,
-                      args.tag, args.status, args.related, args.updated_since])
-    if not has_action:
-        ap.print_help()
-        return
+    # --list-vaults is a standalone mode: answer and exit before any query validation.
+    if getattr(args, 'list_vaults', False):
+        vaults = discover_vaults()
+        if not vaults:
+            print("No Obsidian vaults found under $HOME.")
+        else:
+            print(f"Obsidian vaults under $HOME ({len(vaults)}):\n")
+            if args.root or args.this_vault:
+                current, how = resolve_vault_root(args.root)
+                for v in vaults:
+                    mark = "  * " if os.path.abspath(v) == os.path.abspath(current) else "    "
+                    print(f"{mark}{v}")
+                print(f"\n  * = the scope you asked for (via {how})")
+            else:
+                # Default scope is EVERY vault, so marking one as "active" would be
+                # a lie — and a legend that contradicts the behaviour is worse than
+                # no legend.
+                for v in vaults:
+                    print(f"  * {v}")
+                print("\n  * = all searched by default. "
+                      "Use --this-vault or --root PATH to narrow.")
+        sys.exit(0)
+
+    if getattr(args, 'how_to', False):
+        print(AGENT_GUIDE)
+        sys.exit(0)
+
+    # SCOPE. Unspecified means EVERY vault — that is the whole point of the tool.
+    # One project's answer is often in another project's notes, and an agent asking
+    # "have I solved this before?" cannot know in advance which vault to look in.
+    # Narrowing is opt-in; breadth is the default.
+    if args.root:
+        args.roots = [resolve_vault_root(args.root)[0]]
+        _root_source = '--root'
+    elif args.this_vault:
+        args.roots = [resolve_vault_root(None)[0]]
+        _root_source = 'this vault only'
+    else:
+        args.roots = discover_vaults()
+        _root_source = f'all {len(args.roots)} vaults'
+        if not args.roots:
+            here, why = resolve_vault_root(None)
+            args.roots, _root_source = [here], why
+
+    # Kept for the code paths that still take a single root.
+    args.root = args.roots[0]
+    if os.environ.get("VAULT_QUERY_VERBOSE"):
+        sys.stderr.write(f"[vault-query] scope: {_root_source}\n")
+
+    # P1-1 — Empty string is not a valid query. Omitted = skip, empty = error.
+    if args.content == "" or args.query == "" or args.search == "":
+        sys.stderr.write("ERROR: empty string is not a valid query. Pass omitted to skip, or a non-empty value.\n")
+        sys.exit(1)
+
+    # P1-2 — --search does not compose with filter flags (reject).
+    # TODO(P1-2 Option A): long-term, compose --search with filter flags by post-filtering hybrid results
+    if args.search and any([args.content, args.type, args.tag, args.status, args.query]):
+        sys.stderr.write("ERROR: --search does not compose with filter flags. Use one or the other.\n")
+        sys.exit(1)
+
+    # P1-3 — No arguments at all — print help and exit 1 instead of dumping vault.
+    if not any([args.query, args.content, args.search, args.type, args.tag,
+                args.status, args.related, args.updated_since, args.read_section]):
+        # Preserve existing standalone modes that aren't in the contract list above
+        if not (args.write_section or args.index or args.not_content):
+            ap.print_help()
+            sys.exit(1)
 
     # Validate root
     if not os.path.isdir(args.root):
@@ -993,43 +1294,61 @@ def main():
         if not args.search.strip():
             print("No matches found.")
             return
-        # Auto-reindex BM25 (fast, always)
-        _auto_reindex_bm25(args.root)
-
+        # Run the search once PER VAULT and merge. Indexes are keyed by a hash of
+        # the vault root, so they never collide; each vault answers from its own.
+        all_results = []
         mode = args.search_mode
+        for _root in args.roots:
+            _auto_reindex_bm25(_root)
 
-        # Check vector availability
-        has_vectors = False
-        try:
-            from vault_embeddings import is_available, vector_search as vsearch, get_vector_db_path
-            if is_available():
-                has_vectors = os.path.exists(get_vector_db_path(args.root))
-        except ImportError:
-            pass
+            has_vectors = False
+            try:
+                from vault_embeddings import is_available, vector_search as vsearch, get_vector_db_path
+                if is_available():
+                    has_vectors = os.path.exists(get_vector_db_path(_root))
+            except ImportError:
+                pass
 
-        # Auto-reindex vectors only if mode needs them
-        if has_vectors and mode in ('auto', 'hybrid', 'vector'):
-            _auto_reindex_vectors(args.root)
+            _mode = args.search_mode
+            if has_vectors and _mode in ('auto', 'hybrid', 'vector'):
+                _auto_reindex_vectors(_root)
+            if _mode == 'auto':
+                _mode = 'hybrid' if has_vectors else 'bm25'
+            if _mode == 'vector' and not has_vectors:
+                sys.stderr.write(f"skipping {_root}: no vector index\n")
+                continue
+            if _mode == 'hybrid' and not has_vectors:
+                _mode = 'bm25'
+            mode = _mode
 
-        # Resolve auto mode
-        if mode == 'auto':
-            mode = 'hybrid' if has_vectors else 'bm25'
+            try:
+                if _mode == 'hybrid':
+                    rs = hybrid_search(args.search, limit=args.search_limit, vault_root=_root)
+                elif _mode == 'vector':
+                    rs = vsearch(args.search, limit=args.search_limit, vault_root=_root)
+                else:
+                    rs = bm25_search(args.search, limit=args.search_limit, vault_root=_root)
+            except Exception as e:
+                # One unreadable vault must not sink a cross-vault search.
+                sys.stderr.write(f"skipping {os.path.basename(_root)}: {e}\n")
+                continue
 
-        if mode == 'vector' and not has_vectors:
-            print("Vector search not available. Install onnxruntime + tokenizers, then run --index.", file=sys.stderr)
-            sys.exit(1)
-        if mode == 'hybrid' and not has_vectors:
-            mode = 'bm25'
+            for r in rs:
+                r['_vault'] = os.path.basename(_root.rstrip('/'))
+                r['_vault_root'] = _root
+            all_results.extend(rs)
 
-        if mode == 'hybrid':
-            results = hybrid_search(args.search, limit=args.search_limit, vault_root=args.root)
-            print(f"(hybrid search — BM25+Vector — {len(results)} results)", file=sys.stderr)
-        elif mode == 'vector':
-            results = vsearch(args.search, limit=args.search_limit, vault_root=args.root)
-            print(f"(vector search — {len(results)} results)", file=sys.stderr)
+        # BM25 rank is more-negative-is-better; hybrid/vector score is
+        # higher-is-better. Sorting the wrong way silently inverts relevance.
+        if mode == 'bm25':
+            all_results.sort(key=lambda r: r.get('score', r.get('rank', 0)))
         else:
-            results = bm25_search(args.search, limit=args.search_limit, vault_root=args.root)
-            print(f"(BM25 search — {len(results)} results)", file=sys.stderr)
+            all_results.sort(key=lambda r: r.get('score', 0), reverse=True)
+        results = all_results[:args.search_limit]
+
+        scope = (f"{len(args.roots)} vaults" if len(args.roots) > 1
+                 else os.path.basename(args.roots[0].rstrip('/')))
+        print(f"({mode} search — {len(results)} results across {scope})", file=sys.stderr)
 
         # Post-filter search results by --type, --path, --status, --tag if specified
         if results and (args.type or args.path or args.status or args.tag):
@@ -1037,7 +1356,9 @@ def main():
             filtered = []
             for r in results:
                 rel_path = r.get('rel_path', '')
-                abs_path = os.path.join(args.root, rel_path)
+                # Resolve against the vault this hit actually came from — using the
+                # first root would silently drop every result from the other vaults.
+                abs_path = os.path.join(r.get('_vault_root', args.root), rel_path)
 
                 # --path filter
                 if args.path and not rel_path.startswith(args.path.rstrip('/')):
@@ -1063,6 +1384,35 @@ def main():
 
                 filtered.append(r)
             results = filtered
+
+        # P2-1 — Advisory low-confidence warning (does not block).
+        # BM25 raw rank is unbounded-negative — skipped, no threshold for it.
+        if results and mode == 'hybrid':
+            # 2026-07-26 (RL-067): hybrid mode judges confidence by match
+            # QUALITY (best single-engine rank), not by the combined RRF
+            # score, which conflates quality with how many engines agreed.
+            # A hit only one engine found, at that engine's own #1, is
+            # strong evidence — the old score-threshold check could never
+            # see that, because one source alone can't reach a score
+            # calibrated for two-source agreement.
+            top = results[0]
+            best_rank = top.get('match_rank')
+            if best_rank is None or best_rank > HYBRID_CONFIDENT_RANK:
+                top_score = top.get('score', 0)
+                shown_rank = '?' if best_rank is None else best_rank + 1
+                sys.stderr.write(
+                    f"⚠️ low-confidence: best single-engine rank #{shown_rank} "
+                    f"(top score {top_score:.4f}) — results may not be relevant\n"
+                )
+        elif results:
+            threshold = LOW_CONFIDENCE_THRESHOLDS.get(mode)
+            if threshold is not None:
+                top = results[0]
+                top_score = top.get('score', top.get('rank', 0))
+                if isinstance(top_score, (int, float)) and top_score < threshold:
+                    sys.stderr.write(
+                        f"⚠️ low-confidence: top score {top_score:.3f} < {threshold} threshold ({mode}) — results may not be relevant\n"
+                    )
 
         if args.format == 'json':
             print(json.dumps(results, indent=2))

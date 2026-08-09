@@ -38,7 +38,7 @@ CLI tools Claude calls for vault operations.
 
 | Tool | Purpose |
 |------|---------|
-| `vault-query.py` | Swiss-army vault search: `--query` (name/codename lookup), `--content` (body text search with OR and match location), `--search` (ranked search: BM25 standalone, vector if available, hybrid default), `--index` (build/rebuild search indexes, auto-reindex when stale). Filter with `--type`, `--tag`, `--status`, `--related`, `--path` (subdirectory). `--context N` shows surrounding lines. Enforces schema via `vault-schema.json` when present. |
+| `vault-query.py` | Swiss-army search across **every vault on the machine by default**. Run `vault-query.py --how-to` for the agent-facing guide. Scope with `--this-vault` or `--root PATH`; list vaults with `--list-vaults`. Modes: `--query` (name/codename lookup), `--content` (body text search with OR and match location), `--search` (ranked search: BM25 standalone, vector if available, hybrid default), `--index` (build/rebuild search indexes, auto-reindex when stale). Filter with `--type`, `--tag`, `--status`, `--related`, `--path` (subdirectory). `--context N` shows surrounding lines. Enforces schema via `vault-schema.json` when present. |
 | `vault_lib.py` | Shared library — frontmatter parsing, vault walking, layer classification, size measurement |
 | `memory-query.py` | Fact index CRUD — add, query, update, delete facts with relevance scoring |
 | `memory_lib.py` | Core memory library — indexing, search, management |
@@ -133,6 +133,11 @@ The full template for manual setup is still available in `~/.claude/memory-vault
 
 ### Keyword Search (standalone, zero dependencies)
 ```bash
+vault-query.py --how-to                                   # what it can/cannot do
+vault-query.py --list-vaults                              # every vault found
+vault-query.py --search "how did I solve X"               # ALL vaults (default)
+vault-query.py --this-vault --search "X"                  # only the vault at cwd
+vault-query.py --root ~/other-vault --search "X"          # one named vault
 vault-query.py --content "search term"                    # substring match
 vault-query.py --content "term1|term2|term3"              # OR search
 vault-query.py --content "term" --type episode --path Episodes/ --context 2
@@ -230,3 +235,40 @@ This pattern is useful for token-saving proxies, command audit logging, or secur
 **Python script errors:** Most hooks degrade gracefully (warn but don't block). Check that `python3` is in your PATH and tiktoken is installed (`pip install tiktoken`).
 
 **"vault-health-check.py not found":** The vault cap hooks (router, moc, leaf) call this script. Make sure it's at `~/.claude/scripts/vault-health-check.py` and is executable (`chmod +x`).
+
+
+## Vault resolution (v2 — 2026-08-06)
+
+**Unspecified scope searches every vault**, not one. The answer to *"have I solved this
+before?"* is routinely in a different project's notes, and an agent cannot know which
+vault to look in beforehand. Breadth is the default; narrowing is opt-in.
+
+| scope | how |
+|---|---|
+| every vault under `$HOME` | *(default)* |
+| the vault containing the working directory | `--this-vault` |
+| one named vault | `--root PATH` |
+
+Results carry a **Vault** column whenever a search spans more than one, so
+*"some note says X"* is distinguishable from *"the credit project says X."* Each vault
+keeps its own index (keyed by a hash of its root), searches run per vault and merge,
+and one unreadable vault cannot sink the query.
+
+Single-vault resolution order: `--root` → `$VAULT_ROOT` → `$CLAUDE_PROJECT_DIR` →
+**nearest `.obsidian/` above the working directory** → `$DEFAULT_VAULT_ROOT`. If none
+resolve it **fails with instructions** rather than guessing.
+
+### Why this changed
+
+The previous default was `os.environ.get('CLAUDE_PROJECT_DIR', '<a hardcoded path>')`.
+`CLAUDE_PROJECT_DIR` is unset in many environments, so **every query run anywhere on
+the machine silently answered from one project** — and said nothing about it. Projects
+with hundreds of indexed notes were simply unreachable.
+
+The bug was never really the wrong default. It was that the default was invisible.
+
+> **A default that silently produces plausible results is worse than no default.**
+> If a tool picks something for you, it must say what it picked.
+
+`VAULT_QUERY_VERBOSE=1` prints the resolved scope to stderr. `--list-vaults` shows
+every vault and what would actually be searched.

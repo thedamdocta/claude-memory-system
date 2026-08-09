@@ -33,7 +33,7 @@ summary: >
 ## Preferred Method — Manual Add Mode
 
 ```bash
-python3 /Users/devon/.claude/scripts/session-log-rotate.py \
+python3 ~/.claude/scripts/session-log-rotate.py \
   --project <PROJECT_ROOT> \
   --add \
   --session "XX" \
@@ -42,7 +42,7 @@ python3 /Users/devon/.claude/scripts/session-log-rotate.py \
   --detail "[[Relevant File]] [[session-XX-compaction]]"
 ```
 
-Replace `<PROJECT_ROOT>` with the project directory path (e.g. `/Users/devon/misphitz`).
+Replace `<PROJECT_ROOT>` with the project directory path (e.g. `~/projects/my-vault`).
 
 ### Good Focus text:
 - One sentence, plain English, covers the main arc
@@ -58,7 +58,7 @@ Replace `<PROJECT_ROOT>` with the project directory path (e.g. `/Users/devon/mis
 ## Auto Mode (requires formatted compaction file)
 
 ```bash
-python3 /Users/devon/.claude/scripts/session-log-rotate.py \
+python3 ~/.claude/scripts/session-log-rotate.py \
   --project <PROJECT_ROOT> \
   --auto \
   --compaction-file <PATH_TO_COMPACTION>

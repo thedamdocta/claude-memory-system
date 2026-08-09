@@ -6,13 +6,13 @@ Uses SQLite FTS5 BM25 for ranked text search with strength/decay scoring.
 Called by the agent during sessions to find relevant facts.
 
 Usage:
-    memory-query.py --query "authentication" --limit 10
-    memory-query.py --query "refactor" --type decision
-    memory-query.py --session 12
+    memory-query.py --query "Yume identity" --limit 10
+    memory-query.py --query "redemption" --type decision
+    memory-query.py --session 66m
     memory-query.py --stats
     memory-query.py --decay [--dry-run]
-    memory-query.py --query "deploy" --format json
-    memory-query.py --add "fact content here" --type lesson --importance 5 --session-id 12
+    memory-query.py --query "Lux" --format json
+    memory-query.py --add "fact content here" --type lesson --importance 5 --session-id 66m
     memory-query.py --get <FACT_ID>
     memory-query.py --get <FACT_ID> --format json
     memory-query.py --update <FACT_ID> --importance 5
@@ -39,7 +39,32 @@ from memory_lib import MemoryDB, Fact, FACT_TYPES
 # ---------------------------------------------------------------------------
 
 INDEX_DIR = os.path.expanduser('~/.claude/memory-index')
-DEFAULT_PROJECT = 'my-project'
+def _default_project() -> str:
+    """Which project's memory to search.
+
+    Was hardcoded to one project, so every query run from anywhere else silently
+    answered from the wrong index. Now: $MEMORY_PROJECT, else the basename of
+    $CLAUDE_PROJECT_DIR, else the basename of the nearest Obsidian vault above cwd,
+    else the working directory's own name.
+    """
+    import os as _os
+    env = _os.environ.get('MEMORY_PROJECT')
+    if env:
+        return env
+    proj = _os.environ.get('CLAUDE_PROJECT_DIR')
+    if proj:
+        return _os.path.basename(_os.path.abspath(proj))
+    try:
+        from vault_lib import find_vault_upward
+        v = find_vault_upward()
+        if v:
+            return _os.path.basename(v)
+    except Exception:
+        pass
+    return _os.path.basename(_os.getcwd())
+
+
+DEFAULT_PROJECT = _default_project()
 DEFAULT_LIMIT = 10
 
 # Strength tier thresholds (must match MemoryDB.get_stats / apply_decay)
@@ -342,15 +367,15 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog='''\
 examples:
-  %(prog)s --query "authentication" --limit 10
-  %(prog)s --query "refactor" --type decision
+  %(prog)s --query "Yume identity" --limit 10
+  %(prog)s --query "redemption" --type decision
   %(prog)s --query "hook infrastructure" --type architecture --limit 5
-  %(prog)s --session 12
+  %(prog)s --session 66m
   %(prog)s --stats
   %(prog)s --decay
   %(prog)s --decay --dry-run
-  %(prog)s --query "deploy" --format json
-  %(prog)s --query "deploy" --format compact
+  %(prog)s --query "Lux" --format json
+  %(prog)s --query "Lux" --format compact
   %(prog)s --get abc123def456
   %(prog)s --get abc123def456 --format json
   %(prog)s --update abc123def456 --importance 5
@@ -387,7 +412,8 @@ examples:
     p.add_argument('--min-strength', type=float, default=0.0,
                    help='Minimum strength filter (default: 0.0)')
     p.add_argument('--project', '-p', type=str, default=DEFAULT_PROJECT,
-                   help=f'Project name (default: {DEFAULT_PROJECT})')
+                   help=f'Project name (default: {DEFAULT_PROJECT} — from '
+                        f'$MEMORY_PROJECT / $CLAUDE_PROJECT_DIR / nearest vault / cwd)')
     p.add_argument('--format', '-f', type=str, default='markdown',
                    choices=['markdown', 'json', 'compact'],
                    dest='output_format',
