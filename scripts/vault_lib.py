@@ -42,13 +42,62 @@ def find_vault_upward(start: Optional[str] = None) -> Optional[str]:
     return None
 
 
-def discover_vaults(search_root: Optional[str] = None, max_depth: int = 3) -> list:
-    """Every Obsidian vault under `search_root` (default: $HOME), shallow-first.
+# Vaults registered explicitly, one absolute path per line. The installer writes the
+# vault it set up here. Without this, a vault outside $HOME — another volume, iCloud
+# Drive, an external disk — is invisible to discovery, and the default "search
+# everything" scope silently searches nothing.
+VAULT_REGISTRY = os.path.expanduser("~/.claude/vaults.txt")
 
-    Used by `--list-vaults` so a caller who picked the wrong one can see the
-    alternatives instead of guessing."""
-    base = Path(search_root or os.path.expanduser("~")).resolve()
+
+def registered_vaults() -> list:
+    """Vault paths recorded in ~/.claude/vaults.txt, if any."""
+    try:
+        with open(VAULT_REGISTRY, "r", encoding="utf-8") as fh:
+            lines = [ln.strip() for ln in fh if ln.strip() and not ln.startswith("#")]
+    except (OSError, UnicodeDecodeError):
+        return []
+    return [os.path.abspath(os.path.expanduser(p)) for p in lines
+            if os.path.isdir(os.path.join(os.path.expanduser(p), VAULT_MARKER))]
+
+
+def register_vault(path: str) -> bool:
+    """Record a vault so discovery finds it regardless of where it lives.
+    Returns True if it was newly added."""
+    path = os.path.abspath(os.path.expanduser(path))
+    existing = set(registered_vaults())
+    if path in existing:
+        return False
+    os.makedirs(os.path.dirname(VAULT_REGISTRY), exist_ok=True)
+    with open(VAULT_REGISTRY, "a", encoding="utf-8") as fh:
+        fh.write(path + "\n")
+    return True
+
+
+def discover_vaults(search_root: Optional[str] = None, max_depth: int = 3) -> list:
+    """Every Obsidian vault this machine knows about.
+
+    Three sources, union'd and de-duplicated:
+      1. ~/.claude/vaults.txt          (explicit — survives living outside $HOME)
+      2. $VAULT_ROOT                   (env)
+      3. a shallow scan under $HOME    (convenience)
+
+    A $HOME-only scan was the original bug: an installer can place a vault on any
+    volume, and discovery that only looks in one place reports "no vaults found"
+    while the user is standing in one.
+    """
     found = []
+    if search_root is None:
+        found.extend(registered_vaults())
+        env_root = os.environ.get("VAULT_ROOT")
+        if env_root:
+            env_root = os.path.abspath(os.path.expanduser(env_root))
+            if os.path.isdir(os.path.join(env_root, VAULT_MARKER)):
+                found.append(env_root)
+        here = find_vault_upward()
+        if here:
+            found.append(here)
+
+    base = Path(search_root or os.path.expanduser("~")).resolve()
     for dirpath, dirnames, _ in os.walk(base):
         rel_depth = len(Path(dirpath).relative_to(base).parts)
         if rel_depth >= max_depth:
@@ -59,7 +108,14 @@ def discover_vaults(search_root: Optional[str] = None, max_depth: int = 3) -> li
         if VAULT_MARKER in dirnames:
             found.append(dirpath)
             dirnames[:] = []          # don't descend into a vault looking for vaults
-    return sorted(found)
+
+    seen, unique = set(), []
+    for v in found:
+        key = os.path.abspath(v)
+        if key not in seen:
+            seen.add(key)
+            unique.append(key)
+    return sorted(unique)
 
 
 def resolve_vault_root(explicit: Optional[str] = None) -> tuple:

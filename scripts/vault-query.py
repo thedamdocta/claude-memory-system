@@ -38,7 +38,8 @@ from pathlib import Path
 # Import from vault_lib in same directory
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from vault_lib import (walk_vault, parse_frontmatter, DEFAULT_VAULT_ROOT,
-                       resolve_vault_root, discover_vaults)
+                       resolve_vault_root, discover_vaults, register_vault,
+                       VAULT_REGISTRY)
 
 
 def resolve_file(filename: str, vault_root: str) -> str:
@@ -1175,6 +1176,9 @@ def main():
                         '--root is omitted).')
     ap.add_argument('--this-vault', action='store_true',
                    help='Search only the vault containing the working directory.')
+    ap.add_argument('--add-vault', metavar='PATH',
+                   help='Register a vault so discovery finds it even when it lives '
+                        'outside $HOME (writes to ~/.claude/vaults.txt), then exit.')
     ap.add_argument('--how-to', action='store_true',
                    help='Print the agent guide: what this tool can and cannot do, '
                         'and when to use it instead of grep.')
@@ -1197,9 +1201,13 @@ def main():
     if getattr(args, 'list_vaults', False):
         vaults = discover_vaults()
         if not vaults:
-            print("No Obsidian vaults found under $HOME.")
+            print("No Obsidian vaults found.\n")
+            print("  Searched: ~/.claude/vaults.txt, $VAULT_ROOT, the working")
+            print("            directory's ancestors, and a shallow scan of $HOME.\n")
+            print("  If your vault lives elsewhere (another volume, iCloud Drive),")
+            print("  register it once:  vault-query.py --add-vault /path/to/vault")
         else:
-            print(f"Obsidian vaults under $HOME ({len(vaults)}):\n")
+            print(f"Obsidian vaults known to this machine ({len(vaults)}):\n")
             if args.root or args.this_vault:
                 current, how = resolve_vault_root(args.root)
                 for v in vaults:
@@ -1218,6 +1226,16 @@ def main():
 
     if getattr(args, 'how_to', False):
         print(AGENT_GUIDE)
+        sys.exit(0)
+
+    if getattr(args, 'add_vault', None):
+        path = os.path.abspath(os.path.expanduser(args.add_vault))
+        if not os.path.isdir(os.path.join(path, '.obsidian')):
+            sys.stderr.write(f"ERROR: not an Obsidian vault (no .obsidian/): {path}\n")
+            sys.exit(1)
+        added = register_vault(path)
+        print(f"{'Registered' if added else 'Already registered'}: {path}")
+        print(f"  ({VAULT_REGISTRY})")
         sys.exit(0)
 
     # SCOPE. Unspecified means EVERY vault — that is the whole point of the tool.

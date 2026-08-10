@@ -68,7 +68,12 @@ else
   echo "The memory system files will work without it, but you won't get"
   echo "graph view, backlinks, or search."
   echo ""
-  read -r -p "Install Obsidian now? [Y/n] " INSTALL_OBS
+  if [ "$ASSUME_YES" = "1" ]; then
+    INSTALL_OBS="n"   # never install GUI software unattended
+    echo "Install Obsidian now? [Y/n] n  (--yes: skipping GUI install)"
+  else
+    read -r -p "Install Obsidian now? [Y/n] " INSTALL_OBS
+  fi
   if [[ ! "$INSTALL_OBS" =~ ^[Nn]$ ]]; then
     if [ "$OS" = "mac" ]; then
       echo "Downloading Obsidian for macOS..."
@@ -140,9 +145,14 @@ echo ""
 
 # --- Parse arguments ---
 VAULT_PATH=""
+ASSUME_YES=0
 
 while [[ $# -gt 0 ]]; do
   case $1 in
+    --yes|-y)
+      ASSUME_YES=1
+      shift
+      ;;
     --vault-path)
       VAULT_PATH="$2"
       shift 2
@@ -152,6 +162,9 @@ while [[ $# -gt 0 ]]; do
       echo ""
       echo "Options:"
       echo "  --vault-path PATH    Path to your Obsidian vault (will be created if needed)"
+      echo "  --yes, -y            Non-interactive: accept all prompts. Required when"
+      echo "                       an agent or CI runs this, since the prompts would"
+      echo "                       otherwise hang forever with no visible error."
       echo "  -h, --help           Show this help"
       exit 0
       ;;
@@ -163,6 +176,10 @@ while [[ $# -gt 0 ]]; do
 done
 
 # --- Prompt for vault path if not provided ---
+if [ -z "$VAULT_PATH" ] && [ "$ASSUME_YES" = "1" ]; then
+  echo -e "${RED}ERROR:${NC} --yes requires --vault-path (there is nobody to ask)." >&2
+  exit 1
+fi
 if [ -z "$VAULT_PATH" ]; then
   echo -e "${YELLOW}Where is your Obsidian vault? (This is the folder Obsidian opens as a vault)${NC}"
   echo -e "${YELLOW}If it doesn't exist yet, we'll create it.${NC}"
@@ -190,7 +207,12 @@ echo "  4. Create/update $CLAUDE_DIR/settings.json"
 echo "  5. Set up your Obsidian vault with starter files"
 echo "  6. Install Python dependency: tiktoken"
 echo ""
-read -r -p "Proceed? [y/N] " CONFIRM
+if [ "$ASSUME_YES" = "1" ]; then
+  CONFIRM="y"
+  echo "Proceed? [y/N] y  (--yes)"
+else
+  read -r -p "Proceed? [y/N] " CONFIRM
+fi
 if [[ ! "$CONFIRM" =~ ^[Yy]$ ]]; then
   echo "Aborted."
   exit 0
@@ -645,7 +667,24 @@ _ensure_model()
 fi
 
 echo ""
-echo -e "${BLUE}--- Step 12: Build search index ---${NC}"
+echo -e "${BLUE}--- Step 12: Register the vault ---${NC}"
+# Discovery scans $HOME, which misses vaults on other volumes, external disks or
+# iCloud Drive. We know exactly where this one is, so record it. Without this the
+# default "search every vault" scope can report "no vaults found" while the user is
+# standing inside one.
+VAULT_REGISTRY="$CLAUDE_DIR/vaults.txt"
+touch "$VAULT_REGISTRY"
+if grep -Fxq "$VAULT_PATH" "$VAULT_REGISTRY" 2>/dev/null; then
+  echo "  Already registered: $VAULT_PATH"
+else
+  echo "$VAULT_PATH" >> "$VAULT_REGISTRY"
+  echo "  Registered $VAULT_PATH in $VAULT_REGISTRY"
+fi
+echo "  (add more later:  vault-query.py --add-vault /path/to/vault)"
+echo -e "  ${GREEN}OK${NC}"
+echo ""
+
+echo -e "${BLUE}--- Step 13: Build search index ---${NC}"
 echo "  Building search index for your vault..."
 python3 "$CLAUDE_DIR/scripts/vault-query.py" --index --root "$VAULT_PATH" 2>&1 | sed 's/^/  /'
 

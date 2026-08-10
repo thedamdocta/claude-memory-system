@@ -237,6 +237,29 @@ This pattern is useful for token-saving proxies, command audit logging, or secur
 **"vault-health-check.py not found":** The vault cap hooks (router, moc, leaf) call this script. Make sure it's at `~/.claude/scripts/vault-health-check.py` and is executable (`chmod +x`).
 
 
+## Installing (agents: read this)
+
+```bash
+git clone https://github.com/thedamdocta/claude-memory-system.git
+cd claude-memory-system
+./claude-memory-system.sh --yes --vault-path ~/path/to/your-vault
+```
+
+**`--yes` is required for any non-interactive run.** Without it the installer stops at
+four `read` prompts and simply hangs — no error, no output, nothing to diagnose. It
+also refuses to run with `--yes` unless `--vault-path` is given, because there is
+nobody to ask.
+
+`--yes` deliberately does *not* install Obsidian itself; installing GUI software
+unattended is not a thing an installer should decide for you.
+
+The installer **registers your vault** in `~/.claude/vaults.txt` so search finds it
+wherever it lives. Add more later with:
+
+```bash
+vault-query.py --add-vault /path/to/another-vault
+```
+
 ## Vault resolution (v2 — 2026-08-06)
 
 **Unspecified scope searches every vault**, not one. The answer to *"have I solved this
@@ -253,6 +276,11 @@ Results carry a **Vault** column whenever a search spans more than one, so
 *"some note says X"* is distinguishable from *"the credit project says X."* Each vault
 keeps its own index (keyed by a hash of its root), searches run per vault and merge,
 and one unreadable vault cannot sink the query.
+
+Vaults are discovered from three sources, union'd: **`~/.claude/vaults.txt`** (written
+by the installer, so a vault on another volume or in iCloud Drive is still found),
+`$VAULT_ROOT`, and a shallow scan of `$HOME`. A `$HOME`-only scan was the original
+gap — it reports "no vaults found" while you are standing in one.
 
 Single-vault resolution order: `--root` → `$VAULT_ROOT` → `$CLAUDE_PROJECT_DIR` →
 **nearest `.obsidian/` above the working directory** → `$DEFAULT_VAULT_ROOT`. If none
